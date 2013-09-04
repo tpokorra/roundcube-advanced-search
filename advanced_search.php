@@ -7,6 +7,7 @@
      * @author  Wilwert Claude
      * @author  Ludovicy Steve
      * @author  Chris Moules
+     * @author  Timotheus Pokorra
      * @website http://www.gms.lu
      */
 
@@ -43,6 +44,8 @@
             $this->load_config();
             $this->register_action('plugin.prepare_filter', array($this, 'prepare_filter'));
             $this->register_action('plugin.post_query', array($this, 'post_query'));
+            $this->register_action('plugin.save_query', array($this, 'save_query'));
+            $this->register_action('plugin.load_query', array($this, 'load_query'));
             $this->skin = $this->rc->config->get('skin');
             $this->add_texts('localization', true);
             $this->populate_i18n();
@@ -97,7 +100,8 @@
                 $this->i18n_strings[$label] = $this->rc->gettext($label);
             }
 
-            $local = array('in', 'and', 'or', 'not', 'where', 'exclude', 'andsubfolders', 'allfolders');
+            $local = array('in', 'and', 'or', 'not', 'where', 'exclude', 'andsubfolders', 'allfolders',
+                'SelectSavedSearches', 'NoSearchSelected', 'SaveThisSearch', 'SaveSearch', 'NewSearch', 'HasBeenSaved');
 
             foreach($local as $label) {
                 $this->i18n_strings[$label] = $this->gettext($label);
@@ -354,6 +358,69 @@
             }
         }
         // }}}
+        // {{{ save_query()
+
+        /**
+         * Here is where the query is stored in the preferences for future reuse
+         *
+         * @access public
+         * @return null
+         */
+        function save_query()
+        {
+            $search = get_input_value('search', RCUBE_INPUT_GET);
+
+            if (!empty($search)) {
+                $folder = get_input_value('folder', RCUBE_INPUT_GET);
+                $sub_folders = get_input_value('sub_folders', RCUBE_INPUT_GET) == 'true';
+                $saveas = get_input_value('saveas', RCUBE_INPUT_GET);
+                
+                // avoid problems with object later
+                $newsearch = array();
+                foreach ($search as $row) {
+                    $row['filterval'] = $row['filter-val'];
+                    unset($row['filter-val']);
+                    $newsearch[] = $row;
+                }
+
+                $stored_search = json_encode(array( 'search' => $newsearch, 
+                                        'folder' => $folder,
+                                        'subfolder' => $sub_folders));
+
+                $this->rc->user->save_prefs(array('advanced_search '.$saveas => $stored_search));
+
+                $this->rc->output->show_message($this->i18n_strings['HasBeenSaved'], 'notice');
+            }
+        }
+        // }}}
+        // {{{ load_query()
+
+        /**
+         * Here is where a stored query is loaded
+         *
+         * @access public
+         * @return JSON string with stored query
+         */
+        function load_query()
+        {
+            $searchname = get_input_value('searchname', RCUBE_INPUT_GET);
+
+            if (!empty($searchname)) {
+                $prefs = $this->rc->user->get_prefs();
+
+                $savedsearches_options = '';
+                foreach ($prefs as $key => $value) {
+                    if ($key == 'advanced_search '.$searchname) {
+                        $this->rc->output->set_env('searchjson', $value);
+                        $this->rc->output->set_env('searchname', substr($key, strlen('advanced_search ')));
+                        $this->rc->output->command('plugin.load_search');
+                        $this->rc->output->send();
+                        break;
+                    }
+                }
+            }
+        }
+        // }}}
         // {{{ mail_search_handler()
 
         /**
@@ -418,7 +485,20 @@
          */
         function render_html($folders, $first)
         {
-            $html = '';
+            $prefs = $this->rc->user->get_prefs();
+
+            $savedsearches_options = '';
+            foreach ($prefs as $key => $value) {
+                if (substr($key, 0, strlen('advanced_search')) == 'advanced_search') {
+                    $searchname = substr($key, strlen('advanced_search') + 1);
+                    $savedsearches_options .= '<option id="'.$searchname.'">'.$searchname.'</option>';
+                }
+            }
+
+            $html = '<label>'.$this->i18n_strings['SelectSavedSearches'].':</label>&nbsp;'.
+                '<select name="searchname">'.
+                    '<option>'.$this->i18n_strings['NoSearchSelected'].'</option>'.
+                $savedsearches_options.'</select>';
 
             if ($first) {
                 $options = '';
@@ -508,8 +588,28 @@
                 $html .= html::tag('tfoot', null, $tr);
 
                 $html = html::tag('table', array('id' => 'adv-search'), $html);
-                $html = html::tag('form', array('method' => 'post', 'action' => '#'), $html);
+
+                // save search
+                $html .= '<h3>'.$this->i18n_strings['SaveThisSearch'].'</h3>';
+                $attrs = array(
+                    'type' => 'text',
+                    'name' => 'saveas',
+                    'value' => $this->i18n_strings['NewSearch']
+                );
+                $input = html::tag('input', $attrs, null);
+                $html .= $input;
+                $attrs = array(
+                    'type' => 'submit',
+                    'name' => 'save',
+                    'class' => 'button save',
+                    'value' => $this->i18n_strings['SaveSearch'] 
+                );
+                $input = html::tag('input', $attrs, null);
+                $html .= $input;
+                
+                $html = html::tag('form', array('method' => 'post', 'action' => '#', 'id' => 'advanced_search'), $html);
                 $html = html::tag('div', array('id' => 'adsearch-popup'), $html);
+
             } else {
                 $options = html::tag('option', array('value' => 'and'), $this->i18n_strings['and']);
                 $options .= html::tag('option', array('value' => 'or'), $this->i18n_strings['or']);

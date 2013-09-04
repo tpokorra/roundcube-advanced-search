@@ -7,6 +7,7 @@
      * @author  Wilwert Claude
      * @author  Ludovicy Steve
      * @author  Chris Moules
+     * @author  Timotheus Pokorra
      * @website http://www.gms.lu
      */
 
@@ -65,6 +66,45 @@
         });
     });
 
+    rcmail.addEventListener('plugin.load_search', function(r) {
+        var $form = $('form[id=advanced_search]');
+
+        // clear current search
+        $('tr:not(:first)', $('tbody', $form)).remove();
+        $('option:first', $('select', $form)).attr('selected', 'selected');
+        $('input[type=checkbox]:checked', $form).attr('checked', false);
+        $('input[type=text]', $form).val('');
+        $('select[name=folder]', $form).val(rcmail.env.mailbox);
+        
+        // TODO what if search does not exist, index 0
+        $first = true;
+
+        // load search from json
+        $obj = JSON.parse(rcmail.env.searchjson);
+        $('select[name=folder]', $form).val($obj.folder);
+        $('input[name=subfolder]', $form).attr('checked', $obj.subfolder == true);
+        
+        $.each($obj.search, function($key, $value) {
+            if (!$first) {
+                $('tr', $('tbody', $form)).after($.stack.row);
+            }
+            $first = false;
+            $tr = $('tr', $('tbody', $form));
+            $tr = $tr[$tr.length - 1];
+
+            $row = $value;
+            // not excluded filter filter-val
+            $('input[name=filter-exclude]', $tr).attr('checked', $row.excluded == "true");
+            $('input[name=not]', $tr).attr('checked', $row.not == "true");
+            $('select[name=filter]', $tr).val($row.filter);
+            $('input[name=filter-val]', $tr).val($row.filterval);
+
+        });
+        
+        $('input[name=saveas]').val(rcmail.env.searchname);
+        $('select[name=searchname]').val(rcmail.env.searchname);
+    });
+    
     /**
      * The onclick event handler for the search button. This generates the search query and sends them
      * to the server. It also stores the wrapped set of the old rows into an object for later cleanup.
@@ -103,6 +143,59 @@
                              current_folder: rcmail.env.mailbox,
                              folder: $('select[name=folder]', $form).val(),
                              sub_folders: $('input[name=subfolder]', $form).attr('checked') == 'checked'});
+    });
+
+    /**
+     * The onclick event handler for the save button. This stores the current search parameters and sends it
+     * to the server to be saved as a virtual folder.
+     *
+     * @param {object} e The event element
+     */
+    $('input[name=save]').live('click', function(e) {
+        e.preventDefault();
+
+        rcmail.clear_message_list();
+
+        var $form = $(this).closest('form'),
+            $tr = $('tr', $('tbody', $form)),
+            data = [];
+
+        if ($tr.length) {
+            $tr.each(function() {
+                var item = {not: $('input[name=not]', $(this)).attr('checked') == 'checked',
+                            excluded: $('input[name=filter-exclude]', $(this)).attr('checked') == 'checked',
+                            filter: $('option:selected', $('select[name=filter]', $(this))).val(),
+                            'filter-val': $('input[name=filter-val]', $(this)).val()};
+
+                if ($('select[name=method]', $(this)).length) {
+                    item.method = $('option:selected', $('select[name=method]', $(this))).val();
+                }
+
+                data.push(item);
+            });
+        }
+
+        $.stack.messages = $('tr', $('tbody', '#messagelist'));
+
+        rcmail.http_request('plugin.save_query',
+                            {search: data,
+                             saveas: $('input[name=saveas]', $form).val(),
+                             current_folder: rcmail.env.mailbox,
+                             folder: $('select[name=folder]', $form).val(),
+                             sub_folders: $('input[name=subfolder]', $form).attr('checked') == 'checked'});
+    });
+
+    /**
+     * The onclick event handler for the save button. This stores the current search parameters and sends it
+     * to the server to be saved as a virtual folder.
+     *
+     * @param {object} e The event element
+     */
+    $('select[name=searchname]').live('change', function(e) {
+        e.preventDefault();
+
+        rcmail.http_request('plugin.load_query',
+                            {searchname: $(this).val()});
     });
 
     /**
