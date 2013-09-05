@@ -93,7 +93,7 @@
             $tr = $tr[$tr.length - 1];
 
             $row = $value;
-            // not excluded filter filter-val
+            $('select[name=method]', $form).val($row.method);
             $('input[name=filter-exclude]', $tr).attr('checked', $row.excluded == "true");
             $('input[name=not]', $tr).attr('checked', $row.not == "true");
             $('select[name=filter]', $tr).val($row.filter);
