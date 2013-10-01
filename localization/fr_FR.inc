@@ -15,3 +15,9 @@
     $labels['display_in_messagemenu'] = 'dans le menu des messages';
     $labels['display_in_toolbar'] = 'en tant que bouton dans la Toolbar';
     $labels['show_advanced_search'] = 'Afficher la recherche avancée';
+    $labels['SelectSavedSearches'] = 'Saved Searches';
+    $labels['NoSearchSelected'] = 'No search selected';
+    $labels['SaveThisSearch'] = 'Save this Search';
+    $labels['SaveSearch'] = 'Save';
+    $labels['NewSearch'] = 'New Search';
+    $labels['HasBeenSaved'] = 'Search has been saved';

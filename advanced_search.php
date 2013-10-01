@@ -7,6 +7,7 @@
  * @author  Wilwert Claude
  * @author  Ludovicy Steve
  * @author  Chris Moules
+ * @author  Timotheus Pokorra
  * @website http://www.gms.lu
  */
 
@@ -54,11 +55,13 @@ class advanced_search extends rcube_plugin
         $this->register_action('plugin.display_advanced_search', array($this, 'display_advanced_search'));
         $this->register_action('plugin.trigger_search', array($this, 'trigger_search'));
         $this->register_action('plugin.trigger_search_pagination', array($this, 'trigger_search_pagination'));
+        $this->register_action('plugin.save_query', array($this, 'save_query'));
+        $this->register_action('plugin.load_query', array($this, 'load_query'));
 
         $this->skin = $this->rc->config->get('skin');
         $this->add_texts('localization', true);
         $this->populate_i18n();
-        $this->include_script('advanced_search.min.js');
+        $this->include_script('advanced_search.js');
 
         if ($this->rc->task == 'mail') {
             $file = 'skins/' . $this->skin . '/advanced_search.css';
@@ -176,7 +179,8 @@ class advanced_search extends rcube_plugin
             $this->i18n_strings[$label] = $this->rc->gettext($label);
         }
 
-        $local = array('in', 'and', 'or', 'not', 'where', 'exclude', 'andsubfolders', 'allfolders');
+        $local = array('in', 'and', 'or', 'not', 'where', 'exclude', 'andsubfolders', 'allfolders',
+                'SelectSavedSearches', 'NoSearchSelected', 'SaveThisSearch', 'SaveSearch', 'NewSearch', 'HasBeenSaved');
 
         foreach ($local as $label) {
             $this->i18n_strings[$label] = $this->gettext($label);
@@ -420,10 +424,24 @@ class advanced_search extends rcube_plugin
 
     public function generate_searchbox()
     {
+        $prefs = $this->rc->user->get_prefs();
+
+        $savedsearches_options = html::tag('option', array('value' => 'clear'), $this->i18n_strings['NoSearchSelected']);
+        foreach ($prefs as $key => $value) {
+            if (substr($key, 0, strlen('advanced_search')) == 'advanced_search') {
+                $searchname = substr($key, strlen('advanced_search') + 1);
+                $savedsearches_options .= html::tag('option', array('value' => $searchname), $searchname);
+            }
+        }
+        $select_savedsearches = html::tag('select', array('name' => 'searchname'), $savedsearches_options);
+        $selectsearch_label = '<label>'.$this->i18n_strings['SelectSavedSearches'].':</label>&nbsp;';
+
         $search_button = new html_inputfield(array('type' => 'submit', 'name' => 'search', 'class' => 'button mainaction', 'value' => $this->i18n_strings['search']));
         $reset_button = new html_inputfield(array('type' => 'reset', 'name' => 'reset', 'class' => 'button reset', 'value' => $this->i18n_strings['resetsearch']));
 
         $layout_table = new html_table();
+        $layout_table->add(array('colspan' => '3'), $selectsearch_label.$select_savedsearches);
+        $layout_table->add_row();
         $layout_table->add(null, $search_button->show());
         $folderConfig = array('name' => 'folder');
         $layout_table->add(
@@ -442,19 +460,39 @@ class advanced_search extends rcube_plugin
             $this->i19n_strings['where']
         );
         $first_row = $this->add_row(true);
-        $layout_table->add_row();
+        $layout_table->add_row(array('class' => 'criteria'));
         $layout_table->add(array('class' => 'adv-search-and-or'), null);
         $layout_table->add(null, $first_row);
         $layout_table->add_row();
         $layout_table->add(null, $search_button->show());
         $layout_table->add(null, $reset_button->show());
 
+        // save search
+        $layout_table->add_row();
+        $savehtml = '<h3>'.$this->i18n_strings['SaveThisSearch'].'</h3>';
+        $layout_table->add(array("colspan" => "3"), $savehtml);
+        $layout_table->add_row();
+        $attrs = array(
+             'type' => 'text',
+             'name' => 'saveas',
+             'value' => $this->i18n_strings['NewSearch']
+            );
+        $input = html::tag('input', $attrs, null);
+        $attrs = array(
+             'type' => 'submit',
+             'name' => 'save',
+             'class' => 'button save',
+             'value' => $this->i18n_strings['SaveSearch']
+            );
+        $input .= html::tag('input', $attrs, null);
+        $layout_table->add(array("colspan" => "3"), $input);
+
         return html::tag(
             'div',
             array('id' => 'adsearch-popup'),
             html::tag(
                 'form',
-                array('method' => 'post', 'action' => '#'),
+                array('method' => 'post', 'action' => '#', 'id' => 'advanced_search'),
                 $layout_table->show()
             )
         );
@@ -502,13 +540,13 @@ class advanced_search extends rcube_plugin
         if ($first) {
             $row_html = $tmp;
         } else {
-            $and_or_select = new html_select();
+            $and_or_select = new html_select(array("name" => "method"));
             $and_or_select->add($this->i18n_strings['and'], 'and');
             $and_or_select->add($this->i18n_strings['or'], 'or');
             $tmp .= html::tag('button', array('name' => 'delete', 'class' => 'delete'), $this->i18n_strings['delete']);
             $row_html = html::tag(
                 'tr',
-                null,
+                array('class' => 'criteria'),
                 html::tag(
                     'td',
                     array('class' => 'adv-search-and-or'),
@@ -827,6 +865,65 @@ class advanced_search extends rcube_plugin
         }
 
         return $fetch;
+    }
+
+    /**
+     * Here is where the query is stored in the preferences for future reuse
+     *
+     * @access public
+     * @return null
+     */
+    function save_query()
+    {
+        $search = get_input_value('search', RCUBE_INPUT_GET);
+
+        if (!empty($search)) {
+            $folder = get_input_value('folder', RCUBE_INPUT_GET);
+            $sub_folders = get_input_value('sub_folders', RCUBE_INPUT_GET) == 'true';
+            $saveas = get_input_value('saveas', RCUBE_INPUT_GET);
+            
+            // avoid problems with object later
+            $newsearch = array();
+            foreach ($search as $row) {
+                $row['filterval'] = $row['filter-val'];
+                unset($row['filter-val']);
+                $newsearch[] = $row;
+            }
+
+            $stored_search = json_encode(array( 'search' => $newsearch, 
+                                    'folder' => $folder,
+                                    'subfolder' => $sub_folders));
+
+            $this->rc->user->save_prefs(array('advanced_search '.$saveas => $stored_search));
+
+            $this->rc->output->show_message($this->i18n_strings['HasBeenSaved'], 'notice');
+        }
+    }
+
+    /**
+     * Here is where a stored query is loaded
+     *
+     * @access public
+     * @return JSON string with stored query
+     */
+    function load_query()
+    {
+        $searchname = get_input_value('searchname', RCUBE_INPUT_GET);
+
+        if (!empty($searchname)) {
+            $prefs = $this->rc->user->get_prefs();
+
+            $savedsearches_options = '';
+            foreach ($prefs as $key => $value) {
+                if ($key == 'advanced_search '.$searchname) {
+                    $this->rc->output->set_env('searchjson', $value);
+                    $this->rc->output->set_env('searchname', substr($key, strlen('advanced_search ')));
+                    $this->rc->output->command('plugin.load_search');
+                    $this->rc->output->send();
+                    break;
+                }
+            }
+        }
     }
 
     /**
